@@ -60,6 +60,7 @@ class MainActivity : Activity() {
     private var sickCount = 0
     private var arrowUntil = 0L
     private val logLines = ArrayDeque<String>()
+    private var navStatus = "연결 대기"
     private lateinit var meter: LiveDoseMeter     // 위치 따라가기 때 실측 누적
     private var meterOn = false
     private var lastFixT = -1L
@@ -111,7 +112,7 @@ class MainActivity : Activity() {
             .filter { checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED }
         if (need.isNotEmpty()) requestPermissions(need.toTypedArray(), 1)
         car = CarLink(applicationContext, ::log) { v -> carValues = v; onCarValues() }
-        navi = NaviLink(applicationContext, ::log)
+        navi = NaviLink(applicationContext, ::log) { st -> navStatus = st; showLog() }
         voice = Voice(applicationContext, ::log) { text, final -> onHeard(text, final) }
         car.start(); navi.start(); voice.start()
         if (checkSelfPermission("pleos.car.permission.FUSED_LOCATION") == android.content.pm.PackageManager.PERMISSION_GRANTED) car.startLocation()
@@ -214,9 +215,10 @@ class MainActivity : Activity() {
         followBtn.text = if (follow) "위치 따라가기 중" else "위치 따라가기"
         playBtn.visibility = if (follow) View.GONE else View.VISIBLE
         speedBtn.visibility = if (follow) View.GONE else View.VISIBLE
-        modeChip.text = if (follow) "주행 중 · 차량 위치" else "주행 중 · 시연"
+        modeChip.text = if (follow) "차량 위치로 주행" else "시연 주행"
+        onCarValues()
         navi.requestWithWaypoints(route, plan)
-        say("속편한길 안내를 시작할게요. ${route.name}으로 ${route.destName}까지 갑니다. 휴게소 ${plan.count { it.type == "rest" }}곳에서 쉬어 가요.")
+        say("속편한길 안내를 시작할게요. ${ro(route.name)} ${route.destName}까지 갑니다. " + plan.count { it.type == "rest" }.let { if (it == 0) "쉬지 않고 가도 기준선보다 낮아요." else "휴게소 ${it}곳에서 쉬어 가요." })
         renderDrive()
     }
 
@@ -224,6 +226,7 @@ class MainActivity : Activity() {
         driving = false; playing = false
         driveScreen.visibility = View.GONE; planScreen.visibility = View.VISIBLE
         modeChip.text = "경로 선택"
+        onCarValues()
         navi.cancel()
         thr = nextThr          // 이번 여행에서 배운 기준선은 다음 계획부터 쓴다
         selectDest(dest)
@@ -295,11 +298,16 @@ class MainActivity : Activity() {
         }
         if (arrow.visibility == View.VISIBLE && System.currentTimeMillis() > arrowUntil) arrow.visibility = View.INVISIBLE
 
+        val spd = when {
+            !follow -> "시연 ${Math.round(S.v)}km/h"
+            meterOn -> "속도 ${Math.round(meter.lastSpeed * 3.6)}km/h"      // 실측 누적에 쓴 속도
+            else -> "차속 ${carValues.speedKmh?.let { Math.round(it) } ?: 0}km/h"
+        }
         val cur = route.sections.firstOrNull { S.s >= it.s0 && S.s <= it.s1 }
         val nxt = route.sections.firstOrNull { it.s0 > S.s }
-        if (cur != null) { nextCurve.text = "굽은 길 안 · ${f1((cur.s1 - S.s) / 1000)}km 남음"; nextCurveSub.text = "굽이 ${cur.turns}번 구간 · 지금 ${Math.round(S.v)}km/h" }
-        else if (nxt != null) { nextCurve.text = "다음 굽은 길 ${if (nxt.s0 - S.s < 50) "곧 시작" else f1((nxt.s0 - S.s) / 1000) + "km"}"; nextCurveSub.text = "굽이 ${nxt.turns}번 · ${km(nxt.lenM)} 이어짐 · 지금 ${Math.round(S.v)}km/h" }
-        else { nextCurve.text = "남은 굽은 길 없음"; nextCurveSub.text = "지금 ${Math.round(S.v)}km/h" }
+        if (cur != null) { nextCurve.text = "굽은 길 안 · ${f1((cur.s1 - S.s) / 1000)}km 남음"; nextCurveSub.text = "굽이 ${cur.turns}번 구간 · $spd" }
+        else if (nxt != null) { nextCurve.text = "다음 굽은 길 ${if (nxt.s0 - S.s < 50) "곧 시작" else f1((nxt.s0 - S.s) / 1000) + "km"}"; nextCurveSub.text = "굽이 ${nxt.turns}번 · ${km(nxt.lenM)} 이어짐 · $spd" }
+        else { nextCurve.text = "남은 굽은 길 없음"; nextCurveSub.text = spd }
 
         val nr = plan.filter { it.type == "rest" && it.s > S.s + 1 }.minByOrNull { it.s }
         val ns = plan.firstOrNull { it.type == "no_stop" && it.s > S.s - 20000 }
@@ -338,7 +346,7 @@ class MainActivity : Activity() {
             trip = Trip(route, data.model, plan)
             T = keepT
             navi.requestWithWaypoints(route, plan.filter { it.s > S.s })
-            msg += " ${f1((cand.s - S.s) / 1000)}km 앞 ${cand.name}로 경유지를 바꿀게요."
+            msg += " ${f1((cand.s - S.s) / 1000)}km 앞 ${ro(cand.name)} 경유지를 바꿀게요."
         }
         // 쉬는 중에 한 말은 기록만 하고, 달리다 말한 경우에만 다음 여행 기준선을 낮춘다. 이번 여정의 기준선은 그대로 둔다.
         if (!S.resting) {
@@ -346,7 +354,7 @@ class MainActivity : Activity() {
             if (learned < thr) {
                 getSharedPreferences("sok", Context.MODE_PRIVATE).edit().putFloat("thr", learned.toFloat()).apply()
                 nextThr = learned
-                msg += " 다음 여행부터 기준선을 ${f1(learned)}으로 낮출게요."
+                msg += " 다음 여행부터 기준선을 ${ro(f1(learned))} 낮출게요."
             }
         }
         if (carValues.recirculation == true) msg += " 내기순환이 켜져 있어요. 바깥 공기로 바꿔 주세요."
@@ -358,9 +366,12 @@ class MainActivity : Activity() {
     private fun onCarValues() {
         val v = carValues
         feedMeter(v)
-        val loc = if (v.lat != null && v.lon != null) "%.4f, %.4f".format(v.lat, v.lon) else "-"
+        // 차속이 0인데 위치는 움직이면(에뮬레이터에서 위치만 넣을 때) 위치로 구한 속도를 같이 보여 준다
+        val posNote = if (driving && follow && meterOn && meter.lastPosSpeed * 3.6 > 5 && (v.speedKmh ?: 0.0) < 3) " (위치로 ${Math.round(meter.lastPosSpeed * 3.6)}km/h)" else ""
+        val loc = if (v.lat != null && v.lon != null) "%.3f, %.3f".format(v.lat, v.lon) else "-"
         fun yn(b: Boolean?, y: String, n: String) = when (b) { true -> y; false -> n; null -> "-" }
-        carChips.text = "기어 ${v.gear ?: "-"}   차속 ${v.speedKmh?.let { "%.0fkm/h".format(it) } ?: "-"}   조향각 ${v.steeringDeg?.let { "%.0f°".format(it) } ?: "-"}   2열 우측 ${yn(v.rearRightSeated, "착석", "빈자리")}   내기순환 ${yn(v.recirculation, "켜짐", "꺼짐")}   위치 $loc"
+        val tag = if (driving && !follow) "차량 값(시연과 별개)" else "차량 값"
+        carChips.text = "$tag   기어 ${v.gear ?: "-"}   차속 ${v.speedKmh?.let { "%.0fkm/h".format(it) } ?: "-"}$posNote   조향각 ${v.steeringDeg?.let { "%.0f°".format(it) } ?: "-"}   2열 우측 ${yn(v.rearRightSeated, "착석", "빈자리")}   내기순환 ${yn(v.recirculation, "켜짐", "꺼짐")}   위치 $loc"
         // 급한 회전(조향각 180° 이상)을 차량에서 직접 받으면 알림음
         if (driving && follow && v.steeringDeg != null && Guidance.isSharpTurn(v.steeringDeg)) {
             voice.chime(v.steeringDeg < 0)
@@ -393,9 +404,14 @@ class MainActivity : Activity() {
         prevLat = lat; prevLon = lon
     }
 
+    /** 아래 상태줄: 내비 상태(이벤트로 정리한 값)와 그 밖의 최근 알림 한 줄. */
     private fun log(m: String) {
-        logLines.addLast(m); while (logLines.size > 2) logLines.removeFirst()
-        logView.text = logLines.joinToString("   |   ")
+        if (!m.startsWith("내비")) { logLines.addLast(m); while (logLines.size > 1) logLines.removeFirst() }
+        showLog()
+    }
+
+    private fun showLog() {
+        logView.text = "내비: $navStatus" + (logLines.lastOrNull()?.let { "   |   $it" } ?: "")
     }
 
     // ---------------- UI 조립 ----------------
@@ -483,7 +499,8 @@ class MainActivity : Activity() {
         btns.addView(playBtn, LinearLayout.LayoutParams(0, px(72), 0.9f).apply { rightMargin = px(8) })
         speedBtn = bigButton("x30", "#202734", "#EEF2F6") { speed = when (speed) { 30 -> 60; 60 -> 120; 120 -> 10; else -> 30 }; speedBtn.text = "x$speed" }
         btns.addView(speedBtn, LinearLayout.LayoutParams(0, px(72), 0.6f).apply { rightMargin = px(8) })
-        followBtn = bigButton("위치 따라가기", "#202734", "#EEF2F6") { follow = !follow; meterOn = false; playing = !follow; followBtn.text = if (follow) "위치 따라가기 중" else "위치 따라가기"; playBtn.visibility = if (follow) View.GONE else View.VISIBLE; speedBtn.visibility = playBtn.visibility }
+        followBtn = bigButton("위치 따라가기", "#202734", "#EEF2F6") { follow = !follow; meterOn = false; playing = !follow; followBtn.text = if (follow) "위치 따라가기 중" else "위치 따라가기"; playBtn.visibility = if (follow) View.GONE else View.VISIBLE; speedBtn.visibility = playBtn.visibility
+            modeChip.text = if (follow) "차량 위치로 주행" else "시연 주행"; onCarValues() }
         btns.addView(followBtn, LinearLayout.LayoutParams(0, px(72), 1f).apply { rightMargin = px(8) })
         btns.addView(bigButton("끝내기", "#40201F", "#F2716D") { stopDrive() }, LinearLayout.LayoutParams(0, px(72), 0.7f))
         mid.addView(btns, LinearLayout.LayoutParams(-1, -2).apply { topMargin = px(10) })
@@ -515,6 +532,17 @@ class MainActivity : Activity() {
 
     private fun hex(c: Int) = "#%06X".format(0xFFFFFF and c)
     private fun f1(v: Double) = "%.1f".format(v)
+    /** 숫자·이름 뒤 '으로/로'. 숫자는 끝자리 0·3·6(영·삼·육)만, 한글은 받침이 있고 ㄹ이 아닐 때 '으로'. */
+    private fun ro(n: String): String {
+        val c = n.lastOrNull { it.isLetterOrDigit() } ?: return n + "로"
+        val ro = when {
+            c in "036" -> "으로"
+            c.isDigit() -> "로"
+            c in '가'..'힣' -> { val jong = (c - '가') % 28; if (jong == 0 || jong == 8) "로" else "으로" }
+            else -> "로"
+        }
+        return n + ro
+    }
     private fun km(m: Double) = "%.1fkm".format(m / 1000)
     private fun fmtMin(m: Double): String { val x = Math.round(m).toInt(); return if (x >= 60) "${x / 60}시간 ${x % 60}분" else "${x}분" }
 

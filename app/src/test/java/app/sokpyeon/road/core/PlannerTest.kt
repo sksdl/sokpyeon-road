@@ -50,7 +50,9 @@ class PlannerTest {
         assertTrue(first.any { it.kind == "voice" && it.text.startsWith("800m 앞부터") })
         assertTrue(Guidance.isSickPhrase("엄마 속 안 좋아"))
         assertFalse(Guidance.isSickPhrase("배고파"))
-        assertEquals(19.0, Guidance.learnedThreshold(25.0, 20.0), 0.01)
+        assertEquals(23.3, Guidance.learnedThreshold(25.0, 20.0), 0.01)
+        assertEquals(21.1, Guidance.learnedThreshold(25.0, 13.4), 0.01)   // 한 번에 반 넘게 떨어지지 않는다
+        assertEquals(12.0, Guidance.learnedThreshold(13.0, 5.0), 0.01)
         assertEquals(25.0, Guidance.learnedThreshold(25.0, 26.0), 0.01)
     }
 

@@ -22,11 +22,23 @@ class MapView(context: Context) : View(context) {
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#EEF2F6"); textSize = 15 * dp }
+    private val labelBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#D90E131A") }
     private val colors = mapOf("A" to "#5AA9FF", "B" to "#F2716D", "C" to "#3CCFB4", "D" to "#5AA9FF", "E" to "#F2B84B")
 
     fun setData(routes: List<Route>, selected: Route?, plan: List<Break>, posS: Double) {
         this.routes = routes; this.selected = selected; this.plan = plan; this.posS = posS
         invalidate()
+    }
+
+    /** 경로선과 겹쳐도 읽히게 글자 뒤에 어두운 바탕을 깐다. align은 글자 기준점. */
+    private fun label(c: Canvas, s: String, x: Float, y: Float, align: Paint.Align) {
+        text.textAlign = align
+        val w = text.measureText(s)
+        val left = when (align) { Paint.Align.RIGHT -> x - w; Paint.Align.CENTER -> x - w / 2; else -> x }
+        val fm = text.fontMetrics
+        c.drawRoundRect(left - 5 * dp, y + fm.ascent - 3 * dp, left + w + 5 * dp, y + fm.descent + 3 * dp, 5 * dp, 5 * dp, labelBg)
+        c.drawText(s, x, y, text)
+        text.textAlign = Paint.Align.LEFT
     }
 
     override fun onDraw(c: Canvas) {
@@ -69,12 +81,10 @@ class MapView(context: Context) : View(context) {
                 val (lo, la) = r.pointAt(b.s)
                 c.drawCircle(px(lo), py(la), 8 * dp, fill)
                 val left = px(lo) > width * 0.6f
-                text.textAlign = if (left) Paint.Align.RIGHT else Paint.Align.LEFT
-                c.drawText(b.name, px(lo) + (if (left) -11 else 11) * dp, py(la) + 22 * dp, text)
-                text.textAlign = Paint.Align.LEFT
+                label(c, b.name, px(lo) + (if (left) -14 else 14) * dp, py(la) + 5 * dp, if (left) Paint.Align.RIGHT else Paint.Align.LEFT)
             }
-            c.drawText("출발", px(r.lon[0]) + 12 * dp, py(r.lat[0]) + 6 * dp, text)
-            text.textAlign = Paint.Align.RIGHT; c.drawText(r.destName, px(r.destLon) - 8 * dp, py(r.destLat) - 12 * dp, text); text.textAlign = Paint.Align.LEFT
+            label(c, "출발", px(r.lon[0]) + 12 * dp, py(r.lat[0]) + 6 * dp, Paint.Align.LEFT)
+            label(c, r.destName, px(r.destLon) - 8 * dp, py(r.destLat) - 14 * dp, Paint.Align.RIGHT)
             if (posS >= 0) {
                 val (lo, la) = r.pointAt(posS)
                 fill.color = Color.WHITE

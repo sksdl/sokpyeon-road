@@ -29,9 +29,12 @@ object Guidance {
         return listOf("속안좋", "속이안좋", "멀미", "울렁", "토할", "토나", "메스꺼", "어지러").any { t.contains(it) }
     }
 
-    /** 기준선 학습: 말한 순간의 누적에서 한 번 쉬어 둔 여유(약 10%)를 뺀 값을 새 기준선으로 삼되 12 아래로는 내리지 않는다. */
+    /**
+     * 기준선 학습: 달리는 중 반응이 있으면 새 기준선 = (기존 기준선×2 + 반응 때 누적)÷3.
+     * 한 번의 반응으로 크게 흔들리지 않게 기존 값과 섞는다(기획서와 같은 식). 12 아래로는 내리지 않는다.
+     */
     fun learnedThreshold(current: Double, doseAtReport: Double): Double =
-        if (doseAtReport < current) maxOf(12.0, Math.round(doseAtReport * 0.95 * 10) / 10.0) else current
+        if (doseAtReport < current) maxOf(12.0, Math.round((current * 2 + doseAtReport) / 3 * 10) / 10.0) else current
 
     fun isSharpTurn(angleDeg: Float): Boolean = abs(angleDeg) >= 180f
 }

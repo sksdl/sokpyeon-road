@@ -39,7 +39,7 @@ class CarLink(private val context: Context, private val log: (String) -> Unit, p
     private val main = Handler(Looper.getMainLooper())
     private var vehicle: Vehicle? = null
     private var fused: FusedLocation? = null
-    @Volatile private var values = CarValues()
+    private var values = CarValues()   // 메인 스레드에서만 읽고 쓴다
     private var lastFix: LocationData? = null
 
     private val gearListener = object : GearSelectionListener {
@@ -179,10 +179,9 @@ class CarLink(private val context: Context, private val log: (String) -> Unit, p
         fused = null
     }
 
+    /** SDK 콜백은 여러 스레드에서 온다. 읽고-바꾸고-쓰기를 메인 스레드에서만 해서 값이 빠지지 않게 한다. */
     private fun push(f: (CarValues) -> CarValues) {
-        values = f(values)
-        val snap = values
-        main.post { onChange(snap) }
+        main.post { values = f(values); onChange(values) }
     }
 
     private fun fail(what: String, e: Exception) {

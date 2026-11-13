@@ -72,13 +72,15 @@ class LiveDoseMeter(private val tRestS: Double = 900.0, private val fs: Double =
     private var last: Fix? = null
     private var lastBearing = Double.NaN
     private var lastBearingT = 0.0
-    private var lastSpeed = 0.0
+    private var prevSpeed = 0.0
     private var sampleT = Double.NaN      // 마지막으로 필터에 넣은 표본 시각
     private var sampleA = 0.0             // 그 표본의 좌우 가속도
 
     var cum2 = 0.0; private set
     val dose get() = sqrt(cum2)
     var lastAy = 0.0; private set          // 가장 최근 좌우 가속도(m/s², 가중 전)
+    var lastSpeed = 0.0; private set       // 계산에 쓴 속도(m/s). 차속이 없으면 위치 변화로 구한 값
+    var lastPosSpeed = 0.0; private set    // 위치 변화로 구한 속도(m/s)
     var estimated = false; private set     // 마지막 구간을 모형값으로 채웠으면 true
     var fixes = 0; private set
 
@@ -86,6 +88,7 @@ class LiveDoseMeter(private val tRestS: Double = 900.0, private val fs: Double =
     fun start(initial2: Double) {
         wf.reset(); cum2 = initial2; last = null; lastBearing = Double.NaN; sampleT = Double.NaN
         sampleA = 0.0; lastAy = 0.0; estimated = false; fixes = 0; lat0 = Double.NaN
+        lastSpeed = 0.0; lastPosSpeed = 0.0; prevSpeed = 0.0
     }
 
     /**
@@ -112,6 +115,8 @@ class LiveDoseMeter(private val tRestS: Double = 900.0, private val fs: Double =
         val dist = hypot(f.x - p.x, f.y - p.y)
         val vPos = dist / gap
         val v = if (speedMs != null && speedMs >= 0.5) speedMs else vPos
+        lastPosSpeed = vPos
+        lastSpeed = if (vPos < 0.5) 0.0 else v
         if (vPos < 0.5) {
             // 서 있는 동안: 가속도 0, 누적 제곱은 휴식처럼 줄어든다
             emitUntil(t, 0.0)
@@ -127,9 +132,9 @@ class LiveDoseMeter(private val tRestS: Double = 900.0, private val fs: Double =
             while (d > PI) d -= 2 * PI
             while (d < -PI) d += 2 * PI
             val rate = d / (mid - lastBearingT)
-            a = (v + lastSpeed) / 2 * rate
+            a = (v + prevSpeed) / 2 * rate
         }
-        lastBearing = bearing; lastBearingT = mid; lastSpeed = v
+        lastBearing = bearing; lastBearingT = mid; prevSpeed = v
         lastAy = a
         emitUntil(p.t, a)    // 방향 변화율은 두 구간의 가운데인 앞 위치 시각의 값
         return dose
