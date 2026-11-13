@@ -28,6 +28,7 @@ data class CarValues(
     val speedKmh: Double? = null,
     val rearRightSeated: Boolean? = null,
     val recirculation: Boolean? = null,
+    val fixTimeMs: Long? = null,
 )
 
 /**
@@ -71,7 +72,7 @@ class CarLink(private val context: Context, private val log: (String) -> Unit, p
             val speed = if (speedPoll == null && prev != null && location.timestampMillis > prev.timestampMillis)
                 haversineM(prev.latitude, prev.longitude, location.latitude, location.longitude) /
                     ((location.timestampMillis - prev.timestampMillis) / 1000.0) * 3.6 else null
-            push { it.copy(lat = location.latitude, lon = location.longitude, heading = location.heading, speedKmh = speed ?: it.speedKmh) }
+            push { it.copy(lat = location.latitude, lon = location.longitude, heading = location.heading, speedKmh = speed ?: it.speedKmh, fixTimeMs = location.timestampMillis) }
         }
         override fun onError(exception: Exception) = fail("위치", exception)
     }
@@ -99,7 +100,7 @@ class CarLink(private val context: Context, private val log: (String) -> Unit, p
                         val ms = get.invoke(pm, PERF_VEHICLE_SPEED, 0) as Float
                         push { it.copy(speedKmh = ms * 3.6) }
                     } catch (t: Throwable) { Log.w(TAG, "speed read", t); main.postDelayed(this, 5000); return }
-                    main.postDelayed(this, 500)
+                    main.postDelayed(this, 100)   // 10Hz
                 }
             }
             speedPoll = r

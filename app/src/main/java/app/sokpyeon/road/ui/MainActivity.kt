@@ -24,6 +24,7 @@ import app.sokpyeon.road.car.NaviLink
 import app.sokpyeon.road.car.Voice
 import app.sokpyeon.road.core.Break
 import app.sokpyeon.road.core.Guidance
+import app.sokpyeon.road.core.LiveDoseMeter
 import app.sokpyeon.road.core.Planner
 import app.sokpyeon.road.core.Route
 import app.sokpyeon.road.core.RouteData
@@ -59,6 +60,11 @@ class MainActivity : Activity() {
     private var sickCount = 0
     private var arrowUntil = 0L
     private val logLines = ArrayDeque<String>()
+    private lateinit var meter: LiveDoseMeter     // 위치 따라가기 때 실측 누적
+    private var meterOn = false
+    private var lastFixT = -1L
+    private var prevLat = 0.0
+    private var prevLon = 0.0
 
     // 뷰
     private lateinit var root: LinearLayout
@@ -72,6 +78,7 @@ class MainActivity : Activity() {
     private lateinit var cards: LinearLayout
     private lateinit var destRow: LinearLayout
     private lateinit var thrNote: TextView
+    private lateinit var gaugeTitle: TextView
     private lateinit var gaugeNum: TextView
     private lateinit var gaugeBar: ProgressBar
     private lateinit var gaugeHint: TextView
@@ -96,6 +103,7 @@ class MainActivity : Activity() {
         data = RouteData.parse(assets.open("routes.json").bufferedReader().use { it.readText() })
         thr = getSharedPreferences("sok", Context.MODE_PRIVATE).getFloat("thr", data.childThr.toFloat()).toDouble()
         nextThr = thr
+        meter = LiveDoseMeter(data.model.tRest * 60)
         buildUi()
         selectDest("sokcho")
 
@@ -201,7 +209,7 @@ class MainActivity : Activity() {
     private fun startDrive(followLocation: Boolean) {
         follow = followLocation
         trip = Trip(route, data.model, plan)
-        T = 0.0; prevTd = 0.0; sickCount = 0; driving = true; playing = !follow
+        T = 0.0; prevTd = 0.0; sickCount = 0; driving = true; playing = !follow; meterOn = false
         planScreen.visibility = View.GONE; driveScreen.visibility = View.VISIBLE
         followBtn.text = if (follow) "위치 따라가기 중" else "위치 따라가기"
         playBtn.visibility = if (follow) View.GONE else View.VISIBLE
@@ -253,11 +261,18 @@ class MainActivity : Activity() {
         val S: TripState = trip.stateAt(T)
         clock.text = "여정 ${fmtMin(T / 60)} / ${fmtMin(trip.total / 60)}"
         seek.progress = (T / trip.total * 1000).toInt()
+        val live = follow && meterOn
+        val shown = if (live) meter.dose else S.dose
         val max = thr * 1.3
-        gaugeNum.text = "${f1(S.dose)} / ${f1(thr)}"
-        gaugeBar.progress = (minOf(1.0, S.dose / max) * 1000).toInt()
-        gaugeBar.progressDrawable.setTint(Color.parseColor(if (S.dose >= thr) "#F2716D" else if (S.dose >= 0.8 * thr) "#F2B84B" else "#3CCFB4"))
-        gaugeHint.text = "쉬기 권장 ${f1(thr * 0.8)} · 기준선 ${f1(thr)}"
+        gaugeTitle.text = if (live) "멀미 누적(실측)" else "멀미 누적 예보"
+        gaugeNum.text = "${f1(shown)} / ${f1(thr)}"
+        gaugeBar.progress = (minOf(1.0, shown / max) * 1000).toInt()
+        gaugeBar.progressDrawable.setTint(Color.parseColor(if (shown >= thr) "#F2716D" else if (shown >= 0.8 * thr) "#F2B84B" else "#3CCFB4"))
+        gaugeHint.text = if (live) {
+            val end2 = trip.stateAt(trip.total).dose.let { it * it }
+            val arrive = Math.sqrt(maxOf(0.0, meter.cum2 + end2 - S.dose * S.dose))
+            "좌우 ${"%.1f".format(meter.lastAy)}m/s² · 모형 ${f1(S.dose)} · 도착 예보 ${f1(arrive)}" + if (meter.estimated) " · 예보값으로 계산 중" else ""
+        } else "쉬기 권장 ${f1(thr * 0.8)} · 기준선 ${f1(thr)}"
         driveMap.setData(data.routesTo(dest), route, plan, S.s)
 
         if (S.resting) {
@@ -308,7 +323,8 @@ class MainActivity : Activity() {
 
     private fun childReport(text: String) {
         if (!driving) return
-        val S = trip.stateAt(T)
+        val S0 = trip.stateAt(T)
+        val S = if (follow && meterOn) app.sokpyeon.road.core.TripState(S0.resting, S0.stop, S0.left, S0.before, S0.td, S0.s, S0.v, S0.ay, meter.dose) else S0
         sickCount++
         val cand = Guidance.nearerStop(route, S.s, plan)
         var msg = "\"$text\" 기록했어요. 지금 멀미 누적 ${f1(S.dose)}."
@@ -341,6 +357,7 @@ class MainActivity : Activity() {
 
     private fun onCarValues() {
         val v = carValues
+        feedMeter(v)
         val loc = if (v.lat != null && v.lon != null) "%.4f, %.4f".format(v.lat, v.lon) else "-"
         fun yn(b: Boolean?, y: String, n: String) = when (b) { true -> y; false -> n; null -> "-" }
         carChips.text = "기어 ${v.gear ?: "-"}   차속 ${v.speedKmh?.let { "%.0fkm/h".format(it) } ?: "-"}   조향각 ${v.steeringDeg?.let { "%.0f°".format(it) } ?: "-"}   2열 우측 ${yn(v.rearRightSeated, "착석", "빈자리")}   내기순환 ${yn(v.recirculation, "켜짐", "꺼짐")}   위치 $loc"
@@ -349,6 +366,31 @@ class MainActivity : Activity() {
             voice.chime(v.steeringDeg < 0)
             arrow.text = if (v.steeringDeg < 0) "←" else "→"; arrow.visibility = View.VISIBLE; arrowUntil = System.currentTimeMillis() + 1500
         }
+    }
+
+    /** 위치 따라가기 중이면 새 위치를 실측 누적에 넣는다. */
+    private fun feedMeter(v: CarValues) {
+        if (!driving || !follow) return
+        val t = v.fixTimeMs ?: return
+        val lat = v.lat ?: return
+        val lon = v.lon ?: return
+        if (t == lastFixT) return
+        lastFixT = t
+        if (!meterOn) {
+            followLocation()
+            meter.start(trip.stateAt(T).dose.let { it * it })   // 경로 중간에서 시작하면 그 지점까지는 모형값
+            meterOn = true
+        } else {
+            val pLat = prevLat; val pLon = prevLon
+            meter.addFix(t, lat, lon, v.speedKmh?.div(3.6)) {
+                val ser = route.series
+                val t0 = ser.timeAtS(route.matchS(pLon, pLat)); val t1 = ser.timeAtS(route.matchS(lon, lat))
+                ser.at(ser.dose, t1).let { it * it } - ser.at(ser.dose, t0).let { it * it }
+            }
+            android.util.Log.i(CarLink.TAG, "LIVE: dose=%.2f ay=%.2f est=%s".format(meter.dose, meter.lastAy, meter.estimated))
+        }
+        if (meter.fixes == 0) meter.addFix(t, lat, lon, v.speedKmh?.div(3.6)) { 0.0 }
+        prevLat = lat; prevLon = lon
     }
 
     private fun log(m: String) {
@@ -398,7 +440,7 @@ class MainActivity : Activity() {
         driveScreen = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; visibility = View.GONE; setPadding(px(24), px(6), px(24), px(6)) }
         val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val gauge = card()
-        gauge.addView(tv("멀미 누적 예보", 17, "#97A2B3"))
+        gaugeTitle = tv("멀미 누적 예보", 17, "#97A2B3"); gauge.addView(gaugeTitle)
         gaugeNum = tv("0.0 / 25.0", 52, "#EEF2F6", bold = true); gauge.addView(gaugeNum)
         gaugeBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 1000 }
         gauge.addView(gaugeBar, LinearLayout.LayoutParams(-1, px(16)).apply { topMargin = px(6) })
@@ -441,7 +483,7 @@ class MainActivity : Activity() {
         btns.addView(playBtn, LinearLayout.LayoutParams(0, px(72), 0.9f).apply { rightMargin = px(8) })
         speedBtn = bigButton("x30", "#202734", "#EEF2F6") { speed = when (speed) { 30 -> 60; 60 -> 120; 120 -> 10; else -> 30 }; speedBtn.text = "x$speed" }
         btns.addView(speedBtn, LinearLayout.LayoutParams(0, px(72), 0.6f).apply { rightMargin = px(8) })
-        followBtn = bigButton("위치 따라가기", "#202734", "#EEF2F6") { follow = !follow; playing = !follow; followBtn.text = if (follow) "위치 따라가기 중" else "위치 따라가기"; playBtn.visibility = if (follow) View.GONE else View.VISIBLE; speedBtn.visibility = playBtn.visibility }
+        followBtn = bigButton("위치 따라가기", "#202734", "#EEF2F6") { follow = !follow; meterOn = false; playing = !follow; followBtn.text = if (follow) "위치 따라가기 중" else "위치 따라가기"; playBtn.visibility = if (follow) View.GONE else View.VISIBLE; speedBtn.visibility = playBtn.visibility }
         btns.addView(followBtn, LinearLayout.LayoutParams(0, px(72), 1f).apply { rightMargin = px(8) })
         btns.addView(bigButton("끝내기", "#40201F", "#F2716D") { stopDrive() }, LinearLayout.LayoutParams(0, px(72), 0.7f))
         mid.addView(btns, LinearLayout.LayoutParams(-1, -2).apply { topMargin = px(10) })

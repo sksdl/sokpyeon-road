@@ -12,6 +12,7 @@
 | 휴게소 경유지 | 아이 기준선의 80%에 닿기 전 휴게소를 고르고, 내비에 목적지와 경유지 2곳을 넣는다 | NaviHelper `requestRouteWithWaypoints` |
 | 굽이 알림 | 굽은 길 800m 전에 말로 알리고, 급한 굽이 직전에 좌우 화살표와 알림음을 낸다 | TextToSpeech (ON_DEVICE) |
 | "속 안 좋아" 기록 | 말(또는 큰 버튼)로 알리면 그때 누적을 기록하고, 가까운 쉴 곳으로 경유지를 바꾸고, 다음 여행의 기준선을 낮춘다 | SpeechToText (ON_DEVICE), NaviHelper |
+| 실측 멀미 누적 | "차량 위치로 시작"(위치 따라가기) 중에는 위치가 들어올 때마다 진행 방향 변화율과 차속을 곱해 좌우 가속도를 구하고, 0.1초(10Hz) 간격으로 보간해 ISO 2631-1 Wf 가중을 건 뒤 누적한다. 위치가 2초 넘게 끊기면 그 사이는 경로 모형값으로 채우고 "예보값으로 계산 중"을 표시한다. 화면에는 실측 누적, 지금 좌우 가속도, 모형값, 도착 예보가 함께 나온다 | FusedLocation, AAOS 차속 |
 | 차량 값 | 기어, 조향각, 주행거리, 2열 우측 착석, 내기순환, 위치를 화면 위에 보여 주고, 위치를 경로에 맞춰 따라가는 모드가 있다 | Vehicle SDK, FusedLocation |
 | 차속 | AAOS `PERF_VEHICLE_SPEED`를 읽는다. Vehicle SDK에는 차속 API가 없어서 반사로 호출한다 | android.car (CarPropertyManager) |
 
@@ -22,6 +23,7 @@
 ![휴식 중](docs/screenshots/05_rest.png)
 ![속 안 좋아](docs/screenshots/06_child_reported.png)
 ![내비에 경유지 넣기](docs/screenshots/02_navi_waypoints.png)
+![실측 누적](docs/screenshots/09_live_curve.png)
 
 ## 실행 방법
 
@@ -42,7 +44,7 @@ JDK 17 이상(21에서 확인)과 Android SDK 34가 필요합니다. Gradle은 �
 
 ```bash
 export ANDROID_SDK_ROOT=<Android SDK 경로>
-./gradlew :app:testDebugUnitTest      # 휴식 계획·멀미 누적 계산 시험 7개
+./gradlew :app:testDebugUnitTest      # 휴식 계획·멀미 누적·실측 누적(Wf 필터) 시험 14개
 ./gradlew :app:assembleDebug          # app/build/outputs/apk/debug/app-debug.apk
 ```
 
@@ -77,7 +79,8 @@ Pleos Connect Emulator 2.1.0에서 직접 확인했습니다.
 
 - Vehicle SDK: 기어, 조향각, 주행거리, 2열 우측 착석, 내기순환 조회와 변화 알림. Virtual Console에서 바꾼 값이 앱에 들어옴
 - 차속: AAOS `PERF_VEHICLE_SPEED`를 읽음(Virtual Console에서 가속하면 값이 올라감)
-- FusedLocation: `adb emu geo fix`로 넣은 위치를 받아 경로 위에 표시
+- FusedLocation: `adb emu geo fix`로 넣은 위치를 받아 경로 위에 표시. 에뮬레이터의 위치 갱신은 1초 간격
+- 실측 누적: 미시령 굽은 길(굽이 16번)을 앞뒤 포함 3.4km, 206초 동안 1초 간격 geo fix로 다시 달리게 하니 화면의 실측 누적이 13.8에서 16.1로 올랐다. 이 구간에서 늘어난 양(제곱합 기준)은 실측 8.3, 모형 7.4로 비슷했다. 에뮬레이터에서는 Virtual Console 차속과 geo fix 위치가 따로 움직이므로, 차속이 0일 때는 위치 변화로 구한 속도를 쓴다
 - NaviHelper: 목적지와 경유지 2곳을 요청하면 차량 내비가 "경유지 2개 포함" 경로를 띄움. "속 안 좋아" 뒤에는 경유지를 바꿔 다시 요청함
 - TextToSpeech(ON_DEVICE): 안내 문장이 재생됨(onStart, onDone 확인)
 - SpeechToText(ON_DEVICE): 요청이 온디바이스 엔진에 닿고 한국어로 인식을 시작함
@@ -91,6 +94,8 @@ Pleos Connect Emulator 2.1.0에서 직접 확인했습니다.
 ## 계산 방법
 
 경로별 굽은 길과 멀미 누적은 앱 밖에서 미리 계산해 `app/src/main/assets/routes.json`에 넣었습니다(`tools/make_assets.py`는 계산 결과에서 앱이 쓰는 값만 뽑는 스크립트). 누적은 좌우 가속도를 ISO 2631-1 Wf 가중으로 걸러 제곱합한 멀미 선량이고, 휴식 중에는 15분 시간상수로 줄어듭니다. 아이 기준선은 처음 25, 휴게소는 기준선 80%에 닿기 전에 20분 이상 간격으로 고릅니다. 앱 안의 `core/Planner.kt`가 같은 규칙으로 휴식 계획을 다시 계산하고, `app/src/test`의 시험이 분석 결과(한계령 길은 기준선을 넘고, 미시령터널 길은 휴게소 2곳이면 27.0에서 18.0으로 끝남)와 맞는지 확인합니다.
+
+주행 중 실측 누적은 `core/LiveDose.kt`입니다. Wf 필터는 표준 부속서 A의 네 단 전달함수를 10Hz 쌍선형 변환으로 옮겼고, 0.1~0.63Hz 가중값이 표준표와 0.02 안에서 맞는지 시험합니다. 위치가 1초 간격이면 방향 차분과 보간 때문에 0.16Hz 성분이 약 16% 작게 잡히는데, 시험에서 이 크기까지 확인합니다. 차가 0.5m/s 미만으로 서 있으면 휴식과 같은 규칙(15분 시간상수)으로 누적이 줄어듭니다. 경로 중간에서 따라가기를 시작하면 그 지점까지는 모형값으로 시작합니다. 조향각으로 좌우 가속도를 검산하는 것은 차종 제원(조향비, 축거)이 필요해 넣지 않았습니다.
 
 ## 데이터 출처
 
