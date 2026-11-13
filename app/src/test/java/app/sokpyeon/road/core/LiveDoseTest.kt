@@ -11,11 +11,11 @@ import kotlin.math.sqrt
 
 class LiveDoseTest {
     @Test fun wfMatchesIsoTable() {
-        // ISO 2631-1 표 A의 Wf 값(0.1~0.63Hz). 10Hz 이산 필터가 0.02 안에서 맞아야 한다
+        // ISO 2631-1 표 A의 Wf 값(0.1~0.63Hz). 10Hz 이산 필터가 0.006 안에서 맞아야 한다(실제 최대 차이 약 0.005)
         val ref = mapOf(0.1 to 0.695, 0.125 to 0.895, 0.16 to 1.006, 0.2 to 0.992, 0.25 to 0.854,
             0.315 to 0.619, 0.4 to 0.384, 0.5 to 0.224, 0.63 to 0.116)
         val wf = WfFilter(10.0)
-        for ((f, g) in ref) assertEquals("f=$f", g, wf.gainAt(f), 0.02)
+        for ((f, g) in ref) assertEquals("f=$f", g, wf.gainAt(f), 0.006)
     }
 
     /** 위도·경도로 바꾼 가상 주행 경로. heading(t)를 주면 1초마다 위치를 만든다. */

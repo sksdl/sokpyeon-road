@@ -61,6 +61,7 @@ class MainActivity : Activity() {
     private var arrowUntil = 0L
     private val logLines = ArrayDeque<String>()
     private var navStatus = "연결 대기"
+    private var offRouteM = 0.0      // 위치 따라가기 중 경로에서 떨어진 거리
     private lateinit var meter: LiveDoseMeter     // 위치 따라가기 때 실측 누적
     private var meterOn = false
     private var lastFixT = -1L
@@ -210,7 +211,7 @@ class MainActivity : Activity() {
     private fun startDrive(followLocation: Boolean) {
         follow = followLocation
         trip = Trip(route, data.model, plan)
-        T = 0.0; prevTd = 0.0; sickCount = 0; driving = true; playing = !follow; meterOn = false
+        T = 0.0; prevTd = 0.0; sickCount = 0; driving = true; playing = !follow; meterOn = false; offRouteM = 0.0
         planScreen.visibility = View.GONE; driveScreen.visibility = View.VISIBLE
         followBtn.text = if (follow) "위치 따라가기 중" else "위치 따라가기"
         playBtn.visibility = if (follow) View.GONE else View.VISIBLE
@@ -250,10 +251,12 @@ class MainActivity : Activity() {
         }
     }
 
-    /** 차량 위치를 경로에 맞춰 여정 시각을 정한다. 경로에서 2km 넘게 벗어나면 따라가지 않는다. */
+    /** 차량 위치를 경로에 맞춰 여정 시각을 정한다. 경로에서 2km 넘게 벗어나면 따라가지 않고 예보·굽이 알림을 멈춘다. */
     private fun followLocation() {
         val lat = carValues.lat ?: return
         val lon = carValues.lon ?: return
+        offRouteM = route.offsetM(lon, lat)
+        if (offRouteM > OFF_ROUTE_M) return
         val s = route.matchS(lon, lat)
         var lo = 0.0; var hi = trip.total
         repeat(30) { val mid = (lo + hi) / 2; if (trip.stateAt(mid).s >= s) hi = mid else lo = mid }
@@ -303,9 +306,11 @@ class MainActivity : Activity() {
             meterOn -> "속도 ${Math.round(meter.lastSpeed * 3.6)}km/h"      // 실측 누적에 쓴 속도
             else -> "차속 ${carValues.speedKmh?.let { Math.round(it) } ?: 0}km/h"
         }
-        val cur = route.sections.firstOrNull { S.s >= it.s0 && S.s <= it.s1 }
+        val off = follow && offRouteM > OFF_ROUTE_M
+        val cur = if (off) null else route.sections.firstOrNull { S.s >= it.s0 && S.s <= it.s1 }
         val nxt = route.sections.firstOrNull { it.s0 > S.s }
-        if (cur != null) { nextCurve.text = "굽은 길 안 · ${f1((cur.s1 - S.s) / 1000)}km 남음"; nextCurveSub.text = "굽이 ${cur.turns}번 구간 · $spd" }
+        if (off) { nextCurve.text = "경로를 벗어남(${f1(offRouteM / 1000)}km)"; nextCurveSub.text = "예보와 굽이 알림을 멈췄어요. 경로로 돌아오면 다시 시작해요" }
+        else if (cur != null) { nextCurve.text = "굽은 길 안 · ${f1((cur.s1 - S.s) / 1000)}km 남음"; nextCurveSub.text = "굽이 ${cur.turns}번 구간 · $spd" }
         else if (nxt != null) { nextCurve.text = "다음 굽은 길 ${if (nxt.s0 - S.s < 50) "곧 시작" else f1((nxt.s0 - S.s) / 1000) + "km"}"; nextCurveSub.text = "굽이 ${nxt.turns}번 · ${km(nxt.lenM)} 이어짐 · $spd" }
         else { nextCurve.text = "남은 굽은 길 없음"; nextCurveSub.text = spd }
 
@@ -547,6 +552,7 @@ class MainActivity : Activity() {
     private fun fmtMin(m: Double): String { val x = Math.round(m).toInt(); return if (x >= 60) "${x / 60}시간 ${x % 60}분" else "${x}분" }
 
     companion object {
+        const val OFF_ROUTE_M = 2000.0
         const val COLOR_OK = 0xFF3CCFB4.toInt()
         const val COLOR_WARN = 0xFFF2B84B.toInt()
         const val COLOR_BAD = 0xFFF2716D.toInt()

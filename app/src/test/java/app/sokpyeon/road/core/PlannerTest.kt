@@ -61,5 +61,8 @@ class PlannerTest {
         val (lon, lat) = a.pointAt(50000.0)
         val s = a.matchS(lon, lat)
         assertEquals(50000.0, s, 200.0)
+        assertTrue(a.offsetM(lon, lat) < 100.0)
+        assertTrue(a.offsetM(lon, lat - 0.05) > 2000.0)   // 그 지점에서 남쪽으로 약 5.5km(경로는 이 부근에서 동쪽으로 간다)
+        assertTrue(a.offsetM(127.0, 37.0) > 50000.0)
     }
 }

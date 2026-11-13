@@ -55,6 +55,18 @@ class Route(
         return lon[i] to lat[i]
     }
 
+    /** 위치가 경로에서 떨어진 거리(m). 경로 꼭짓점(약 100m 간격)까지의 최단 거리라 100m 안쪽 오차가 있다. */
+    fun offsetM(longitude: Double, latitude: Double): Double {
+        val k = Math.cos(Math.toRadians(latitude))
+        var bd = Double.MAX_VALUE
+        for (i in lon.indices) {
+            val dx = (lon[i] - longitude) * k
+            val dy = lat[i] - latitude
+            bd = minOf(bd, dx * dx + dy * dy)
+        }
+        return Math.toRadians(Math.sqrt(bd)) * 6371000.0
+    }
+
     /** 위치에서 가장 가까운 경로 지점의 거리 s(m). 실주행 위치를 경로 위에 맞출 때 쓴다. */
     fun matchS(longitude: Double, latitude: Double): Double {
         val k = Math.cos(Math.toRadians(latitude))
