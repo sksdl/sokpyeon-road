@@ -29,10 +29,10 @@
 
 ### APK로 설치
 
-`apk/박윤빈_속편한길_release.apk`를 Pleos Connect Emulator(아래)에 설치합니다.
+`apk/미졸자_속편한길_release.apk`를 Pleos Connect Emulator(아래)에 설치합니다.
 
 ```bash
-adb install apk/박윤빈_속편한길_release.apk
+adb install apk/미졸자_속편한길_release.apk
 adb shell am start -n app.sokpyeon.road/.ui.MainActivity
 ```
 
